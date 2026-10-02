@@ -197,14 +197,20 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   if (compact) {
     return (
       <div className="jarvis-compact-shell">
-        <div className={`jarvis-core jarvis-core--compact jarvis-core--${mode}`} aria-hidden="true">
+        <button
+          type="button"
+          className={`jarvis-core jarvis-core--compact jarvis-core--${mode}`}
+          onClick={toggleListening}
+          aria-label="Falar com Jarvis"
+          title="Clique para falar com Jarvis"
+        >
           <div className="jarvis-core__halo" />
           <div className="jarvis-core__ring jarvis-core__ring--outer" />
           <div className="jarvis-core__ring jarvis-core__ring--mid" />
           <div className="jarvis-core__orb">
-            <Waves size={18} />
+            {mode === 'listening' ? <Mic size={18} /> : mode === 'speaking' ? <Volume2 size={18} /> : <Waves size={18} />}
           </div>
-        </div>
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="hud-heartbeat" />
@@ -212,6 +218,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
           </div>
           <div className="jarvis-compact-detail truncate">{copy.detail}</div>
         </div>
+        <button
+          type="button"
+          className={`jarvis-compact-voice ${conversationMode ? 'is-active' : ''}`}
+          onClick={toggleConversationMode}
+          title={conversationMode ? 'Encerrar conversa contínua' : 'Iniciar conversa contínua'}
+        >
+          <Radio size={12} />
+          <span>{conversationMode ? 'LIVE' : 'VOZ'}</span>
+        </button>
         <div className="jarvis-compact-meta">
           <span>{model}</span>
           <span className="jarvis-divider">/</span>
