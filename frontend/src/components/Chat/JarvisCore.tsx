@@ -11,6 +11,7 @@ import {
   SunMedium,
   Volume2,
   Waves,
+  Radio,
 } from 'lucide-react';
 import { useAppStore } from '../../lib/store';
 import { useTtsStore } from '../../lib/tts';
@@ -118,6 +119,7 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   const currentTool = streamState.activeToolCalls.find((tool) => tool.status === 'running')?.tool;
   const copy = modeCopy(mode, streamState.phase, currentTool);
   const voiceMode = settings.speechEnabled && settings.voiceOutputEnabled && settings.voiceAutoplay;
+  const conversationMode = settings.voiceConversationMode && voiceMode;
   const model = selectedModel || serverInfo?.model || 'modelo local';
   const agent = serverInfo?.agent || 'orchestrator';
 
@@ -155,7 +157,25 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
       speechEnabled: next,
       voiceOutputEnabled: next,
       voiceAutoplay: next,
+      voiceConversationMode: next ? settings.voiceConversationMode : false,
     });
+  };
+
+  const toggleConversationMode = () => {
+    const next = !conversationMode;
+    updateSettings({
+      speechEnabled: next ? true : settings.speechEnabled,
+      voiceOutputEnabled: next ? true : settings.voiceOutputEnabled,
+      voiceAutoplay: next ? true : settings.voiceAutoplay,
+      voiceConversationMode: next,
+    });
+
+    if (next) {
+      window.setTimeout(
+        () => window.dispatchEvent(new CustomEvent('jarvis:toggle-listening')),
+        120,
+      );
+    }
   };
 
   const toggleListening = () => {
@@ -296,6 +316,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
         >
           <Mic size={15} />
           <span>{voiceMode ? 'Voz ativa' : 'Ativar modo voz'}</span>
+        </button>
+        <button
+          type="button"
+          className={`jarvis-action jarvis-action--conversation ${conversationMode ? 'is-active' : ''}`}
+          onClick={toggleConversationMode}
+          title="Escuta até você terminar, responde em voz e volta a ouvir automaticamente"
+        >
+          <Radio size={15} />
+          <span>{conversationMode ? 'Conversa contínua' : 'Iniciar conversa contínua'}</span>
         </button>
         {QUICK_ACTIONS.map((action) => {
           const Icon = action.icon;
