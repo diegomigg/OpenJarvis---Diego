@@ -85,6 +85,8 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   const serverInfo = useAppStore((s) => s.serverInfo);
   const streamState = useAppStore((s) => s.streamState);
   const deepResearch = useAppStore((s) => s.deepResearch);
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
   const ttsState = useTtsStore((s) => s.state);
   const [speechState, setSpeechState] = useState('idle');
   const [now, setNow] = useState(() => new Date());
@@ -115,6 +117,7 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
 
   const currentTool = streamState.activeToolCalls.find((tool) => tool.status === 'running')?.tool;
   const copy = modeCopy(mode, streamState.phase, currentTool);
+  const voiceMode = settings.speechEnabled && settings.voiceOutputEnabled && settings.voiceAutoplay;
   const model = selectedModel || serverInfo?.model || 'modelo local';
   const agent = serverInfo?.agent || 'orchestrator';
 
@@ -144,6 +147,31 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
         detail: { prompt: action.prompt, send: Boolean(action.send) },
       }),
     );
+  };
+
+  const toggleVoiceMode = () => {
+    const next = !voiceMode;
+    updateSettings({
+      speechEnabled: next,
+      voiceOutputEnabled: next,
+      voiceAutoplay: next,
+    });
+  };
+
+  const toggleListening = () => {
+    if (!voiceMode) {
+      updateSettings({
+        speechEnabled: true,
+        voiceOutputEnabled: true,
+        voiceAutoplay: true,
+      });
+      window.setTimeout(
+        () => window.dispatchEvent(new CustomEvent('jarvis:toggle-listening')),
+        80,
+      );
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('jarvis:toggle-listening'));
   };
 
   if (compact) {
@@ -190,7 +218,13 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
       </div>
 
       <div className="jarvis-stage">
-        <div className={`jarvis-core jarvis-core--${mode}`}>
+        <button
+          type="button"
+          className={`jarvis-core jarvis-core--${mode}`}
+          onClick={toggleListening}
+          aria-label="Falar com Jarvis"
+          title={voiceMode ? 'Clique para falar com Jarvis' : 'Ativar voz e falar com Jarvis'}
+        >
           <div className="jarvis-core__halo" />
           <div className="jarvis-core__scan" />
           <div className="jarvis-core__ring jarvis-core__ring--outer" />
@@ -208,7 +242,7 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
               <Waves size={34} />
             )}
           </div>
-        </div>
+        </button>
 
         <div className="jarvis-status">
           <div className="jarvis-status__mode">{copy.title}</div>
@@ -254,6 +288,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
       </div>
 
       <div className="jarvis-actions">
+        <button
+          type="button"
+          className={`jarvis-action jarvis-action--voice ${voiceMode ? 'is-active' : ''}`}
+          onClick={toggleVoiceMode}
+          title="Ativa microfone, envio automático da fala e resposta por voz"
+        >
+          <Mic size={15} />
+          <span>{voiceMode ? 'Voz ativa' : 'Ativar modo voz'}</span>
+        </button>
         {QUICK_ACTIONS.map((action) => {
           const Icon = action.icon;
           return (
