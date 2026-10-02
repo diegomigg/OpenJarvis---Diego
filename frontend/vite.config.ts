@@ -11,7 +11,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 // browser, so requests stay on Vite's origin even on a custom frontend port.
 const apiTarget = process.env.OPENJARVIS_VITE_PROXY_TARGET
   || process.env.VITE_API_URL
-  || 'http://localhost:8000';
+  || 'http://127.0.0.1:8000';
 
 export default defineConfig({
   resolve: {
