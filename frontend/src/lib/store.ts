@@ -36,6 +36,9 @@ export interface AgentEvent {
 
 const CONVERSATIONS_KEY = 'openjarvis-conversations';
 const SETTINGS_KEY = 'openjarvis-settings';
+const JARVIS_DEFAULTS_MIGRATION_KEY = 'openjarvis-jarvis-defaults-v1';
+const JARVIS_DEFAULT_MODEL = 'qwen3.5:4b';
+const JARVIS_DEFAULT_AGENT = 'orchestrator';
 const OPTIN_KEY = 'openjarvis-optin';
 const OPTIN_NAME_KEY = 'openjarvis-display-name';
 const OPTIN_EMAIL_KEY = 'openjarvis-email';
@@ -117,19 +120,43 @@ function loadSettings(): Settings {
     apiUrl: '',
     apiKey: '',
     fontSize: 'default',
-    defaultModel: '',
-    defaultAgent: '',
+    defaultModel: JARVIS_DEFAULT_MODEL,
+    defaultAgent: JARVIS_DEFAULT_AGENT,
     temperature: 0.7,
     maxTokens: 4096,
-    speechEnabled: false,
-    voiceOutputEnabled: false,
-    voiceAutoplay: false,
+    speechEnabled: true,
+    voiceOutputEnabled: true,
+    voiceAutoplay: true,
     voiceConversationMode: false,
   };
+
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return defaults;
-    return { ...defaults, ...JSON.parse(raw) };
+    const parsed = raw ? JSON.parse(raw) : {};
+    let loaded: Settings = { ...defaults, ...parsed };
+
+    // One-time migration from the original OpenJarvis defaults. Our Jarvis
+    // experience is voice-first, so the first run after this upgrade starts
+    // with STT + TTS + autoplay enabled and the local 4B model selected.
+    // After this migration the user's later changes remain persistent.
+    if (localStorage.getItem(JARVIS_DEFAULTS_MIGRATION_KEY) !== '1') {
+      loaded = {
+        ...loaded,
+        defaultModel: JARVIS_DEFAULT_MODEL,
+        defaultAgent: JARVIS_DEFAULT_AGENT,
+        speechEnabled: true,
+        voiceOutputEnabled: true,
+        voiceAutoplay: true,
+      };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(loaded));
+      localStorage.setItem(JARVIS_DEFAULTS_MIGRATION_KEY, '1');
+    }
+
+    // Repair empty legacy values without overriding an explicit later choice.
+    if (!loaded.defaultModel) loaded.defaultModel = JARVIS_DEFAULT_MODEL;
+    if (!loaded.defaultAgent) loaded.defaultAgent = JARVIS_DEFAULT_AGENT;
+
+    return loaded;
   } catch {
     return defaults;
   }
@@ -515,7 +542,11 @@ export const useAppStore = create<AppState>((set, get) => {
         return { models };
       }),
     setModelsLoading: (loading: boolean) => set({ modelsLoading: loading }),
-    setSelectedModel: (model: string) => set({ selectedModel: model }),
+    setSelectedModel: (model: string) => {
+      const updatedSettings = { ...get().settings, defaultModel: model };
+      saveSettings(updatedSettings);
+      set({ selectedModel: model, settings: updatedSettings });
+    },
     setServerInfo: (info: ServerInfo | null) => set({ serverInfo: info }),
     setSavings: (data: SavingsData | null) => set({ savings: data }),
     incrementSavings: (usage: TokenUsage) => {
