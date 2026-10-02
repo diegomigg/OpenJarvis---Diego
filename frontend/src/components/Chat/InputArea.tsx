@@ -171,8 +171,8 @@ export function InputArea() {
     resetStream();
   }, [resetStream]);
 
-  const sendMessage = useCallback(async () => {
-    const content = input.trim();
+  const sendMessage = useCallback(async (overridePrompt?: string) => {
+    const content = (overridePrompt ?? input).trim();
     if (!content || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
@@ -554,6 +554,29 @@ export function InputArea() {
     maxTokens,
   ]);
 
+  useEffect(() => {
+    const onQuickPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: string; send?: boolean }>).detail;
+      const prompt = detail?.prompt?.trim();
+      if (!prompt) return;
+
+      if (detail.send) {
+        void sendMessage(prompt);
+        return;
+      }
+
+      setInput(prompt);
+      window.setTimeout(() => {
+        textareaRef.current?.focus();
+        const el = textareaRef.current;
+        if (el) el.setSelectionRange(el.value.length, el.value.length);
+      }, 0);
+    };
+
+    window.addEventListener('jarvis:quick-prompt', onQuickPrompt as EventListener);
+    return () => window.removeEventListener('jarvis:quick-prompt', onQuickPrompt as EventListener);
+  }, [sendMessage]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -608,7 +631,7 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
+          placeholder={selectedModel ? 'Fale com Jarvis...' : 'Selecione um modelo primeiro (⌘K)...'}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
