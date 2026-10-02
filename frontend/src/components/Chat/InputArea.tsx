@@ -13,6 +13,17 @@ import {
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
 import { useTtsStore } from '../../lib/tts';
+const FAST_VOICE_API = 'http://127.0.0.1:8001';
+
+function needsSmartVoiceRoute(text: string): boolean {
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  return /\b(hoje|amanha|ontem|data|hora|horario|clima|tempo|previsao|pesquis|web|internet|noticia|arquivo|pdf|documento|planilha|agenda|email|e-mail|memoria|lembra|calcule|calculo|cotacao|preco|atual|agora|onde|quando)\b/.test(normalized);
+}
+
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -258,7 +269,11 @@ export function InputArea() {
 
     // Build API messages before adding assistant placeholder
     const currentMessages = useAppStore.getState().messages;
-    const apiMessages = currentMessages.map((m) => ({
+    const fastVoiceTurn = conversationMode && !needsSmartVoiceRoute(content);
+    const historySource = fastVoiceTurn
+      ? currentMessages.slice(-8)
+      : currentMessages;
+    const apiMessages = historySource.map((m) => ({
       role: m.role,
       content: m.content,
     }));
@@ -437,9 +452,30 @@ export function InputArea() {
           }
         }
       } else {
+      const voiceMaxTokens = fastVoiceTurn ? Math.min(maxTokens, 220) : maxTokens;
+      const voiceTemperature = fastVoiceTurn ? Math.min(temperature, 0.55) : temperature;
+      const chatBase = fastVoiceTurn ? FAST_VOICE_API : undefined;
+
+      if (fastVoiceTurn) {
+        setStreamState({ phase: 'Resposta rápida...' });
+        useAppStore.getState().addLogEntry({
+          timestamp: Date.now(),
+          level: 'info',
+          category: 'chat',
+          message: 'Voice fast lane → direct local model',
+        });
+      }
+
       for await (const sseEvent of streamChat(
-        { model: selectedModel, messages: apiMessages, stream: true, temperature, max_tokens: maxTokens },
+        {
+          model: selectedModel,
+          messages: apiMessages,
+          stream: true,
+          temperature: voiceTemperature,
+          max_tokens: voiceMaxTokens,
+        },
         controller.signal,
+        chatBase,
       )) {
         const eventName = sseEvent.event;
 
