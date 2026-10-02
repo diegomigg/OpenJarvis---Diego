@@ -12,8 +12,9 @@ export interface ChatRequest {
 export async function* streamChat(
   request: ChatRequest,
   signal?: AbortSignal,
+  baseOverride?: string,
 ): AsyncGenerator<SSEEvent> {
-  const base = getBase();
+  const base = baseOverride ?? getBase();
   const response = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
