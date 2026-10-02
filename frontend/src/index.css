@@ -1774,3 +1774,48 @@
     gap: 8px;
   }
 }
+
+
+.jarvis-chat-surface.is-immersive {
+  --color-bg: #031225;
+  --color-bg-secondary: #061a32;
+  --color-surface: #071b33;
+  --color-input-bg: rgba(5, 24, 47, .9);
+  --color-input-border: rgba(56, 217, 255, .24);
+  --color-text: #e7fbff;
+  --color-text-secondary: #a8c8d4;
+  --color-text-tertiary: #668999;
+  --color-border: rgba(56, 217, 255, .14);
+  --color-accent: #38d9ff;
+  --color-accent-subtle: rgba(56, 217, 255, .1);
+  background:
+    radial-gradient(circle at 50% 16%, rgba(0, 112, 255, .18), transparent 36%),
+    linear-gradient(180deg, #04162c, #020d1b);
+}
+
+.jarvis-chat-surface.is-immersive > .flex-1 {
+  scrollbar-color: rgba(56,217,255,.22) transparent;
+}
+
+.jarvis-chat-surface.is-immersive .jarvis-immersive-history {
+  position: relative;
+}
+
+.jarvis-chat-surface.is-immersive .jarvis-immersive-history::before {
+  content: 'CONVERSA';
+  display: block;
+  margin-bottom: 16px;
+  color: #38d9ff;
+  font: 700 9px/1 var(--font-hud);
+  letter-spacing: .2em;
+}
+
+.jarvis-chat-surface.is-immersive .jarvis-immersive-history::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 92px;
+  right: 16px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(56,217,255,.25), transparent);
+}
