@@ -1309,6 +1309,13 @@ def include_all_routes(app) -> None:
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
+    try:
+        from openjarvis.server.live_router import router as jarvis_live_router
+
+        app.include_router(jarvis_live_router)
+    except Exception:
+        logger.debug("Jarvis Live routes not available", exc_info=True)
+
     # Agent Manager routes (if available)
     try:
         if hasattr(app.state, "agent_manager") and app.state.agent_manager:
