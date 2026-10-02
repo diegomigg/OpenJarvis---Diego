@@ -1128,3 +1128,50 @@
   .jarvis-core { width: 190px; }
   .jarvis-compact-meta { display: none; }
 }
+
+
+.jarvis-core[type="button"] {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.jarvis-core[type="button"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, white 10%);
+  outline-offset: 8px;
+  border-radius: 50%;
+}
+
+.jarvis-core[type="button"]:hover .jarvis-core__orb {
+  transform: scale(1.06);
+  box-shadow:
+    inset 0 0 24px rgba(255,255,255,.1),
+    0 0 28px color-mix(in srgb, var(--jarvis-energy) 38%, transparent),
+    0 0 78px color-mix(in srgb, var(--jarvis-energy) 24%, transparent);
+}
+
+.jarvis-action--voice {
+  grid-column: span 2;
+  border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border));
+}
+
+.jarvis-action--voice.is-active {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-accent) 46%, var(--color-border));
+  box-shadow: 0 0 28px color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.jarvis-action--voice.is-active::after {
+  content: 'LIVE';
+  margin-left: 4px;
+  font: 700 8px/1 var(--font-hud);
+  letter-spacing: .14em;
+  color: var(--color-success);
+}
+
+@media (max-width: 900px) {
+  .jarvis-action--voice { grid-column: span 2; }
+}
