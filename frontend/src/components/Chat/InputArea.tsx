@@ -12,6 +12,7 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
+import { useTtsStore } from '../../lib/tts';
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -84,12 +85,15 @@ export function InputArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoListenTimerRef = useRef<number | null>(null);
+  const previousTtsStateRef = useRef(useTtsStore.getState().state);
 
   const activeId = useAppStore((s) => s.activeId);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const streamState = useAppStore((s) => s.streamState);
   const messages = useAppStore((s) => s.messages);
   const speechEnabled = useAppStore((s) => s.settings.speechEnabled);
+  const conversationMode = useAppStore((s) => s.settings.voiceConversationMode);
   const maxTokens = useAppStore((s) => s.settings.maxTokens);
   const temperature = useAppStore((s) => s.settings.temperature);
   const createConversation = useAppStore((s) => s.createConversation);
@@ -110,6 +114,7 @@ export function InputArea() {
     startRecording,
     stopRecording,
   } = useSpeech();
+  const ttsState = useTtsStore((s) => s.state);
 
   // Abort in-flight stream when the user switches models mid-generation.
   // This prevents errors from trying to continue a stream with a stale model.
@@ -167,6 +172,50 @@ export function InputArea() {
     window.addEventListener('jarvis:toggle-listening', onToggleListening);
     return () => window.removeEventListener('jarvis:toggle-listening', onToggleListening);
   }, [handleMicClick, micDisabled]);
+
+  useEffect(() => {
+    const onSilenceDetected = () => {
+      if (!conversationMode || speechState !== 'recording') return;
+      void handleMicClick();
+    };
+    window.addEventListener('jarvis:silence-detected', onSilenceDetected);
+    return () => window.removeEventListener('jarvis:silence-detected', onSilenceDetected);
+  }, [conversationMode, speechState, handleMicClick]);
+
+  useEffect(() => {
+    const previous = previousTtsStateRef.current;
+    previousTtsStateRef.current = ttsState;
+
+    const finishedSpeaking =
+      (previous === 'loading' || previous === 'speaking') &&
+      ttsState === 'idle';
+
+    if (!conversationMode || !finishedSpeaking) return;
+    if (!speechAvailable || speechState !== 'idle' || streamState.isStreaming) return;
+
+    if (autoListenTimerRef.current !== null) {
+      window.clearTimeout(autoListenTimerRef.current);
+    }
+
+    autoListenTimerRef.current = window.setTimeout(() => {
+      const app = useAppStore.getState();
+      if (!app.settings.voiceConversationMode || app.streamState.isStreaming) return;
+      window.dispatchEvent(new CustomEvent('jarvis:toggle-listening'));
+    }, 420);
+
+    return () => {
+      if (autoListenTimerRef.current !== null) {
+        window.clearTimeout(autoListenTimerRef.current);
+        autoListenTimerRef.current = null;
+      }
+    };
+  }, [
+    conversationMode,
+    ttsState,
+    speechAvailable,
+    speechState,
+    streamState.isStreaming,
+  ]);
 
   useEffect(() => {
     const el = textareaRef.current;
