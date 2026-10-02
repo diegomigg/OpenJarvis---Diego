@@ -1963,3 +1963,89 @@
     width: calc(100% - 20px);
   }
 }
+
+
+/* Jarvis Live — cloud full-duplex voice */
+.jarvis-action--live {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(74, 222, 255, .34) !important;
+  background:
+    linear-gradient(110deg, rgba(13, 104, 160, .28), rgba(9, 36, 68, .72)) !important;
+}
+
+.jarvis-action--live::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 15%,
+    rgba(97, 230, 255, .14) 48%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+}
+
+.jarvis-action--live:not(:disabled):hover::before,
+.jarvis-action--live.is-active::before {
+  animation: jarvis-live-scan 2.4s linear infinite;
+}
+
+.jarvis-action--live.is-active {
+  color: #8df5ff !important;
+  border-color: rgba(77, 235, 255, .7) !important;
+  background:
+    radial-gradient(circle at 15% 50%, rgba(55, 235, 255, .2), transparent 35%),
+    linear-gradient(110deg, rgba(10, 104, 150, .5), rgba(6, 28, 55, .82)) !important;
+  box-shadow:
+    inset 0 0 24px rgba(48, 222, 255, .08),
+    0 0 30px rgba(39, 209, 255, .17);
+}
+
+.jarvis-action--live.is-active::after {
+  content: 'FULL DUPLEX';
+  margin-left: auto;
+  color: #4ff1c8;
+  font: 700 8px/1 var(--font-hud);
+  letter-spacing: .12em;
+}
+
+.jarvis-action--live:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+.jarvis-compact-live.is-active {
+  color: #89f3ff;
+  border-color: rgba(61, 223, 255, .72);
+  background: rgba(7, 83, 126, .35);
+  box-shadow: 0 0 22px rgba(48, 220, 255, .16);
+}
+
+.jarvis-core--live {
+  --jarvis-energy: #47e9ff;
+  filter: drop-shadow(0 0 34px rgba(65, 230, 255, .35));
+}
+
+.jarvis-core--live .jarvis-core__ring--outer {
+  animation-duration: 5s;
+}
+
+.jarvis-core--live .jarvis-core__ring--mid {
+  animation-duration: 3.4s;
+}
+
+.jarvis-core--live .jarvis-core__orb {
+  color: #e8fdff;
+  box-shadow:
+    inset 0 0 32px rgba(255,255,255,.13),
+    0 0 34px rgba(62, 228, 255, .58),
+    0 0 92px rgba(14, 139, 255, .38);
+}
+
+@keyframes jarvis-live-scan {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(110%); }
+}
