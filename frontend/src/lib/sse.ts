@@ -7,36 +7,20 @@ export interface ChatRequest {
   stream: true;
   temperature?: number;
   max_tokens?: number;
+  direct?: boolean;
 }
 
 export async function* streamChat(
   request: ChatRequest,
   signal?: AbortSignal,
-  baseOverride?: string,
 ): AsyncGenerator<SSEEvent> {
-  const defaultBase = getBase();
-  const base = baseOverride ?? defaultBase;
-  const init: RequestInit = {
+  const base = getBase();
+  const response = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(request),
     signal,
-  };
-
-  let response: Response;
-  try {
-    response = await fetch(`${base}/v1/chat/completions`, init);
-  } catch (error) {
-    if (!baseOverride) throw error;
-    // The optional low-latency voice server is an optimization, never a
-    // dependency. If it is not running, transparently fall back to the normal
-    // OpenJarvis backend so voice chat still works.
-    response = await fetch(`${defaultBase}/v1/chat/completions`, init);
-  }
-
-  if (!response.ok && baseOverride) {
-    response = await fetch(`${defaultBase}/v1/chat/completions`, init);
-  }
+  });
 
   if (!response.ok) {
     throw new Error(`Chat request failed: ${response.status}`);
