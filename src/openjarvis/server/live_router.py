@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -13,9 +13,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jarvis/live", tags=["jarvis-live"])
 
+VOICE_MODEL = "gpt-live-1"
+LIVE_PRICE_PER_MINUTE_USD = 0.05
+
+_BACKEND_PROFILES: dict[str, dict[str, Any]] = {
+    "economy": {
+        "model": "gpt-5.6-luna",
+        "reasoning": {"effort": "low"},
+        "max_output_tokens": 700,
+    },
+    "analysis": {
+        "model": "gpt-5.6-terra",
+        "reasoning": {"effort": "medium"},
+        "max_output_tokens": 2200,
+    },
+}
+
 
 class LiveSessionRequest(BaseModel):
     sdp: str
+    backend_mode: Literal["economy", "analysis"] = "economy"
 
 
 def _persona_context(request: Request) -> str:
@@ -42,14 +59,12 @@ def _persona_context(request: Request) -> str:
     except Exception:
         logger.debug("Jarvis Live persona loading failed", exc_info=True)
 
-    # Bring the automatic local fact memory into the Live backend too. This is
-    # deliberately best-effort: voice must still start if memory is unavailable.
     try:
         memory_service = getattr(request.app.state, "memory_service", None)
         if memory_service is not None:
             facts = memory_service.list_facts()
             lines: list[str] = []
-            for fact in facts[:40]:
+            for fact in facts[:24]:
                 if isinstance(fact, str):
                     value = fact
                 else:
@@ -66,34 +81,47 @@ def _persona_context(request: Request) -> str:
     except Exception:
         logger.debug("Jarvis Live fact loading failed", exc_info=True)
 
-    # Keep the prompt bounded; persistent/retrieval memory can be added through
-    # delegated tools later without bloating every Live session.
-    return "\n\n".join(parts)[:12000]
+    # Do not ship an ever-growing biography on every session. Project-specific
+    # memory will be retrieved selectively in the next workspace layer.
+    return "\n\n".join(parts)[:7000]
 
 
 def _live_instructions() -> str:
     return (
         "Você é Jarvis, um assistente pessoal de voz em português do Brasil. "
-        "Converse de forma natural, rápida, calma e elegante. Seja conciso em voz; "
-        "não leia markdown, listas artificiais ou símbolos. Use 'senhor' apenas "
-        "ocasionalmente. Aceite interrupções sem reclamar. Quando a pergunta "
-        "exigir fatos atuais, pesquisa, análise mais profunda, memória de negócios "
-        "ou uso de ferramentas, delegue ao backend em vez de inventar. "
-        "Nunca afirme que executou uma ação sem confirmação do backend."
+        "Converse de forma natural, rápida, calma e elegante. Respostas faladas "
+        "devem ser curtas por padrão; aprofunde somente quando o usuário pedir. "
+        "Não leia markdown, símbolos ou cabeçalhos artificiais. Aceite interrupções "
+        "naturalmente. Use o backend apenas quando a pergunta exigir fatos atuais, "
+        "pesquisa, memória, ferramentas ou análise. Para conversa casual e comandos "
+        "simples, responda diretamente sem delegar. Nunca invente dados atuais nem "
+        "afirme que uma ação foi executada sem confirmação."
     )
 
 
 def _backend_instructions(context: str) -> str:
     base = (
         "Você é o cérebro analítico do Jarvis. Responda em português do Brasil. "
-        "Use web_search para fatos atuais. Seja preciso e não invente dados. "
-        "Para respostas destinadas à fala, seja direto e natural. "
-        "Use o contexto privado abaixo quando for relevante aos projetos do usuário; "
-        "não o mencione gratuitamente e não suponha informações ausentes."
+        "Seja econômico em tokens: entregue primeiro a conclusão e use detalhes "
+        "apenas quando ajudarem a decisão. Use web_search para fatos atuais. "
+        "Não invente dados. Para fala, prefira linguagem natural e curta. "
+        "Use o contexto privado somente quando for relevante ao pedido atual."
     )
     if not context:
         return base
-    return f"{base}\n\n# Contexto privado local do usuário\n\n{context}"
+    return f"{base}\n\n# Contexto privado local\n\n{context}"
+
+
+def _responses_profile(mode: str, context: str) -> dict[str, Any]:
+    profile = _BACKEND_PROFILES.get(mode, _BACKEND_PROFILES["economy"])
+    return {
+        "model": profile["model"],
+        "instructions": _backend_instructions(context),
+        "tools": [{"type": "web_search"}],
+        "tool_choice": "auto",
+        "reasoning": profile["reasoning"],
+        "max_output_tokens": profile["max_output_tokens"],
+    }
 
 
 @router.get("/status")
@@ -103,8 +131,12 @@ async def live_status() -> dict[str, Any]:
     available = bool(_load_keys().get("OPENAI_API_KEY"))
     return {
         "available": available,
-        "voice_model": "gpt-live-1",
-        "backend_model": "gpt-5.6-terra",
+        "voice_model": VOICE_MODEL,
+        "live_price_per_minute_usd": LIVE_PRICE_PER_MINUTE_USD,
+        "default_backend_mode": "economy",
+        "backend_models": {
+            key: value["model"] for key, value in _BACKEND_PROFILES.items()
+        },
     }
 
 
@@ -113,30 +145,23 @@ async def create_live_session(body: LiveSessionRequest, request: Request):
     if not body.sdp.strip():
         raise HTTPException(status_code=400, detail="An SDP offer is required")
 
-    # Browser/Tauri origins already pass through the app CORS policy. Keep this
-    # endpoint local-oriented and never expose the project API key to the client.
     from openjarvis.server.cloud_router import _load_keys
 
     api_key = _load_keys().get("OPENAI_API_KEY", "")
     if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="OPENAI_API_KEY is not configured. Add it in Settings > API Keys.",
+            detail="OPENAI_API_KEY is not configured.",
         )
 
     context = _persona_context(request)
     payload = {
         "session": {
-            "model": "gpt-live-1",
+            "model": VOICE_MODEL,
             "instructions": _live_instructions(),
             "delegation": {
                 "type": "responses",
-                "responses": {
-                    "model": "gpt-5.6-terra",
-                    "instructions": _backend_instructions(context),
-                    "tools": [{"type": "web_search"}],
-                    "tool_choice": "auto",
-                },
+                "responses": _responses_profile(body.backend_mode, context),
             },
         },
         "transport": {
