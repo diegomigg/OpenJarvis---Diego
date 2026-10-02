@@ -104,7 +104,7 @@ export function ChatArea() {
       last?.role === 'assistant' &&
       activeId !== null;
 
-    if (isCurrentChatStreaming && canSpeak) {
+    if (isCurrentChatStreaming && canSpeak && last) {
       const progress = speechProgressRef.current;
       if (
         progress.conversationId !== activeId ||
@@ -132,7 +132,7 @@ export function ChatArea() {
     const justFinished = previousStreamingRef.current && !isCurrentChatStreaming;
     previousStreamingRef.current = isCurrentChatStreaming;
 
-    if (justFinished && canSpeak) {
+    if (justFinished && canSpeak && last) {
       const progress = speechProgressRef.current;
       const finalText = last.content || '';
       const remainder =
