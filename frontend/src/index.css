@@ -2310,3 +2310,23 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+.jarvis-orbit-node.is-busy {
+  color: #d1b8ff;
+  border-color: rgba(181, 126, 255, .46);
+  box-shadow:
+    inset 0 0 18px rgba(176, 116, 255, .08),
+    0 0 24px rgba(159, 116, 255, .18);
+  animation: jarvis-node-busy 1.15s ease-in-out infinite;
+}
+
+.jarvis-orbit-node.is-busy::before {
+  background: #b98cff;
+  box-shadow: 0 0 12px #b98cff;
+}
+
+@keyframes jarvis-node-busy {
+  0%, 100% { transform: scale(1); opacity: .78; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
