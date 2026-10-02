@@ -144,6 +144,7 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   const idleRemaining = useJarvisLiveStore((s) => s.idleRemaining);
   const liveUserCaption = useJarvisLiveStore((s) => s.userCaption);
   const liveAssistantCaption = useJarvisLiveStore((s) => s.assistantCaption);
+  const backendBusy = useJarvisLiveStore((s) => s.backendBusy);
   const ensureLiveStatus = useJarvisLiveStore((s) => s.ensureStatus);
   const setBackendMode = useJarvisLiveStore((s) => s.setBackendMode);
   const connectLive = useJarvisLiveStore((s) => s.connect);
@@ -529,9 +530,11 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
             <span className="jarvis-orbit jarvis-orbit--three" />
             <span className="jarvis-orbit jarvis-orbit--four" />
 
-            <span className="jarvis-orbit-node jarvis-orbit-node--brain">
+            <span className={`jarvis-orbit-node jarvis-orbit-node--brain ${backendBusy ? 'is-busy' : ''}`}>
               {liveState === 'live'
-                ? backendModel.replace('gpt-5.6-', '').toUpperCase()
+                ? backendBusy
+                  ? 'ANALISANDO'
+                  : backendModel.replace('gpt-5.6-', '').toUpperCase()
                 : 'LOCAL'}
             </span>
             <span className="jarvis-orbit-node jarvis-orbit-node--cost">
@@ -638,7 +641,7 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
             </div>
             <div className="jarvis-context-item">
               <span>BACKEND</span>
-              <strong>{backendModel}</strong>
+              <strong>{backendBusy ? `${backendModel} · ANALISANDO` : backendModel}</strong>
             </div>
             <div className="jarvis-context-item">
               <span>POLÍTICA</span>
