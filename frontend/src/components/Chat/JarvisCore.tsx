@@ -177,9 +177,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   const lastUser = [...messages].reverse().find((message) => message.role === 'user');
   const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
   const latestAssistantText =
-    streamState.isStreaming && streamState.content
-      ? streamState.content
-      : lastAssistant?.content;
+    liveState === 'live' && liveAssistantCaption
+      ? liveAssistantCaption
+      : streamState.isStreaming && streamState.content
+        ? streamState.content
+        : lastAssistant?.content;
+  const latestUserText =
+    liveState === 'live' && liveUserCaption
+      ? liveUserCaption
+      : lastUser?.content;
   const displayUserText =
     liveState === 'live' && liveUserCaption ? liveUserCaption : lastUser?.content;
   const displayAssistantText =
@@ -455,6 +461,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
             <span className="jarvis-orbit jarvis-orbit--two" />
             <span className="jarvis-orbit jarvis-orbit--three" />
             <span className="jarvis-orbit jarvis-orbit--four" />
+            <span className="jarvis-orbit-node jarvis-orbit-node--brain">
+              {liveState === 'live' ? backendModel.replace('gpt-5.6-', '').toUpperCase() : 'LOCAL'}
+            </span>
+            <span className="jarvis-orbit-node jarvis-orbit-node--cost">
+              US$ {sessionCostUsd.toFixed(2)}
+            </span>
+            <span className="jarvis-orbit-node jarvis-orbit-node--guard">
+              {liveState === 'live' ? `AUTO SLEEP ${idleRemaining}s` : 'STANDBY'}
+            </span>
           </div>
 
           <button
@@ -546,6 +561,52 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
                   <strong>{Math.floor(liveSeconds / 60)}m {Math.floor(liveSeconds % 60)}s · US$ {liveSessionCost.toFixed(3)}</strong>
                 </div>
               </>
+            )}
+          </div>
+
+          <div className="jarvis-glass-panel jarvis-cost-panel">
+            <div className="jarvis-panel-title">CUSTO & INTELIGÊNCIA</div>
+            <div className="jarvis-brain-switch">
+              <button
+                type="button"
+                className={backendMode === 'economy' ? 'is-active' : ''}
+                onClick={() => setBackendMode('economy')}
+              >
+                ECONOMIA
+                <small>Luna</small>
+              </button>
+              <button
+                type="button"
+                className={backendMode === 'analysis' ? 'is-active' : ''}
+                onClick={() => setBackendMode('analysis')}
+              >
+                ANÁLISE
+                <small>Terra</small>
+              </button>
+            </div>
+            <div className="jarvis-cost-grid">
+              <div>
+                <span>LIVE</span>
+                <strong>US$ {liveCostUsd.toFixed(3)}</strong>
+              </div>
+              <div>
+                <span>BACKEND</span>
+                <strong>US$ {backendCostUsd.toFixed(3)}</strong>
+              </div>
+              <div>
+                <span>SESSÃO</span>
+                <strong>US$ {sessionCostUsd.toFixed(3)}</strong>
+              </div>
+              <div>
+                <span>MÊS</span>
+                <strong>US$ {monthCostUsd.toFixed(2)}</strong>
+              </div>
+            </div>
+            {liveState === 'live' && (
+              <div className="jarvis-live-budget-line">
+                <span>{Math.floor(liveSeconds / 60)}:{String(Math.floor(liveSeconds % 60)).padStart(2, '0')}</span>
+                <strong>standby em {idleRemaining}s</strong>
+              </div>
             )}
           </div>
 
