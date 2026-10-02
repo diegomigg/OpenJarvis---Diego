@@ -163,6 +163,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     model = request_body.model
     use_server_agent = (
         agent is not None
+        and not request_body.direct
         and not request_body.tools
         and (not request_body.stream or bool(getattr(agent, "_tools", None)))
     )
@@ -267,7 +268,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             )
             # Bump max_tokens when complexity suggests more than what
             # the client requested — never reduce below the request value.
-            if suggested > request_body.max_tokens:
+            if suggested > request_body.max_tokens and not request_body.direct:
                 request_body.max_tokens = suggested
         except Exception:
             logging.getLogger("openjarvis.server").debug(
