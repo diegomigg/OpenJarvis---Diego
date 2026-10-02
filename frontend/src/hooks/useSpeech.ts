@@ -11,6 +11,10 @@ export function useSpeech() {
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('jarvis:speech-state', { detail: { state } }));
+  }, [state]);
+
   // Check if speech backend is available on mount
   useEffect(() => {
     fetchSpeechHealth()
