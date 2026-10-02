@@ -145,7 +145,11 @@ export function InputArea() {
       try {
         const text = await stopRecording();
         if (text) {
-          setInput((prev) => (prev ? prev + ' ' + text : text));
+          window.dispatchEvent(
+            new CustomEvent('jarvis:quick-prompt', {
+              detail: { prompt: text, send: true },
+            }),
+          );
         }
       } catch {
         // Error is captured in useSpeech
@@ -154,6 +158,15 @@ export function InputArea() {
       await startRecording();
     }
   }, [speechState, startRecording, stopRecording]);
+
+  useEffect(() => {
+    const onToggleListening = () => {
+      if (micDisabled) return;
+      void handleMicClick();
+    };
+    window.addEventListener('jarvis:toggle-listening', onToggleListening);
+    return () => window.removeEventListener('jarvis:toggle-listening', onToggleListening);
+  }, [handleMicClick, micDisabled]);
 
   useEffect(() => {
     const el = textareaRef.current;
