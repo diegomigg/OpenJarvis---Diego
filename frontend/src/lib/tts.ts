@@ -1,41 +1,38 @@
 import { create } from 'zustand';
 import { synthesizeSpeech, fetchTtsHealth } from './api';
+import { toSpeechText } from './message-text';
 
 export type TtsState = 'idle' | 'loading' | 'speaking';
 
-/**
- * Voice output is a single shared resource: one utterance at a time, for the
- * whole app. The state lives in one store rather than per component, because a
- * per-component hook would give every message its own audio element -- two
- * replies would then talk over each other, and autoplay would make that the
- * normal case rather than the exception.
- */
 interface TtsStore {
   state: TtsState;
-  /** id of the message currently loading or speaking, if any. */
   speakingId: string | null;
   error: string | null;
-  /** Message whose read-aloud attempt failed, if any. */
   errorId: string | null;
-  /** null until the health probe has answered. */
   available: boolean | null;
-  /** Last message spoken by autoplay, so a re-render never repeats it. */
   autoSpokenId: string | null;
   speak: (id: string, text: string) => Promise<void>;
+  enqueue: (id: string, text: string) => void;
   stop: () => void;
   ensureHealth: () => Promise<void>;
   markAutoSpoken: (id: string) => void;
 }
 
-// Playback handles are not render state -- keeping them out of the store avoids
-// re-rendering every subscriber when an audio element is swapped.
 let audio: HTMLAudioElement | null = null;
 let objectUrl: string | null = null;
 let controller: AbortController | null = null;
 let token = 0;
 let healthProbe: Promise<void> | null = null;
 
-/** Only a stream ending in the active conversation may trigger autoplay. */
+interface QueueItem {
+  id: string;
+  text: string;
+}
+
+let speechQueue: QueueItem[] = [];
+let queueRunning = false;
+let queueRunId = 0;
+
 export function shouldAutoplayFinishedReply(
   previousStreamingConversationId: string | null,
   activeId: string | null,
@@ -51,12 +48,8 @@ export function shouldAutoplayFinishedReply(
     && lastMessage.id !== autoSpokenId;
 }
 
-function teardown(): void {
+function clearPlayback(): void {
   if (audio) {
-    // Detach first: clearing src re-runs the media load algorithm, which fails
-    // on an empty source and dispatches an `error` event. With the handler
-    // still attached that surfaces as a bogus "Playback failed" after every
-    // successful utterance.
     audio.onended = null;
     audio.onerror = null;
     audio.pause();
@@ -67,13 +60,109 @@ function teardown(): void {
     URL.revokeObjectURL(objectUrl);
     objectUrl = null;
   }
+}
+
+function abortSynthesis(): void {
   if (controller) {
     controller.abort();
     controller = null;
   }
 }
 
-export const useTtsStore = create<TtsStore>((set, get) => ({
+function teardown(): void {
+  clearPlayback();
+  abortSynthesis();
+}
+
+function cancelQueue(): void {
+  queueRunId += 1;
+  speechQueue = [];
+  queueRunning = false;
+}
+
+async function pumpQueue(
+  set: (partial: Partial<TtsStore>) => void,
+): Promise<void> {
+  if (queueRunning) return;
+  queueRunning = true;
+  const runId = queueRunId;
+
+  const playNext = async (): Promise<void> => {
+    if (runId !== queueRunId) {
+      queueRunning = false;
+      return;
+    }
+
+    const item = speechQueue.shift();
+    if (!item) {
+      queueRunning = false;
+      set({ state: 'idle', speakingId: null });
+      return;
+    }
+
+    clearPlayback();
+    abortSynthesis();
+    set({
+      state: 'loading',
+      speakingId: item.id,
+      error: null,
+      errorId: null,
+    });
+
+    const ac = new AbortController();
+    controller = ac;
+
+    try {
+      const blob = await synthesizeSpeech(item.text, { signal: ac.signal });
+      if (runId !== queueRunId) return;
+      controller = null;
+
+      const url = URL.createObjectURL(blob);
+      objectUrl = url;
+      const el = new Audio(url);
+      audio = el;
+
+      el.onended = () => {
+        if (runId !== queueRunId) return;
+        clearPlayback();
+        void playNext();
+      };
+      el.onerror = () => {
+        if (runId !== queueRunId) return;
+        clearPlayback();
+        queueRunning = false;
+        speechQueue = [];
+        set({
+          state: 'idle',
+          speakingId: null,
+          error: 'Playback failed',
+          errorId: item.id,
+        });
+      };
+
+      await el.play();
+      if (runId === queueRunId) {
+        set({ state: 'speaking', speakingId: item.id });
+      }
+    } catch (err) {
+      if (runId !== queueRunId) return;
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      controller = null;
+      queueRunning = false;
+      speechQueue = [];
+      set({
+        state: 'idle',
+        speakingId: null,
+        error: err instanceof Error ? err.message : 'Speech synthesis failed',
+        errorId: item.id,
+      });
+    }
+  };
+
+  await playNext();
+}
+
+export const useTtsStore = create<TtsStore>((set) => ({
   state: 'idle',
   speakingId: null,
   error: null,
@@ -97,12 +186,18 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
 
   markAutoSpoken: (id: string) => set({ autoSpokenId: id }),
 
+  enqueue: (id: string, text: string) => {
+    const cleaned = toSpeechText(text);
+    if (!cleaned) return;
+    speechQueue.push({ id, text: cleaned });
+    void pumpQueue(set);
+  },
+
   speak: async (id: string, text: string) => {
-    const trimmed = text.trim();
+    const trimmed = toSpeechText(text);
     if (!trimmed) return;
 
-    // Bump before teardown so a synthesis still in flight is both aborted and
-    // fenced off by the token, even if the abort loses the race.
+    cancelQueue();
     token += 1;
     const mine = token;
     teardown();
@@ -114,6 +209,7 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
     try {
       const blob = await synthesizeSpeech(trimmed, { signal: ac.signal });
       if (mine !== token) return;
+      controller = null;
 
       const url = URL.createObjectURL(blob);
       objectUrl = url;
@@ -122,12 +218,12 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
 
       el.onended = () => {
         if (mine !== token) return;
-        teardown();
+        clearPlayback();
         set({ state: 'idle', speakingId: null });
       };
       el.onerror = () => {
         if (mine !== token) return;
-        teardown();
+        clearPlayback();
         set({ state: 'idle', speakingId: null, error: 'Playback failed', errorId: id });
       };
 
@@ -147,14 +243,15 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
   },
 
   stop: () => {
+    cancelQueue();
     token += 1;
     teardown();
     set({ state: 'idle', speakingId: null, error: null, errorId: null });
   },
 }));
 
-/** Test seam: reset module-level playback handles between cases. */
 export function __resetTtsForTests(): void {
+  cancelQueue();
   teardown();
   token = 0;
   healthProbe = null;

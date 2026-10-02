@@ -12,6 +12,16 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
+import { useTtsStore } from '../../lib/tts';
+function needsSmartVoiceRoute(text: string): boolean {
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  return /\b(hoje|amanha|ontem|data|hora|horario|clima|tempo|previsao|pesquis|web|internet|noticia|arquivo|pdf|documento|planilha|agenda|email|e-mail|memoria|lembra|calcule|calculo|cotacao|preco|atual|agora|onde|quando)\b/.test(normalized);
+}
+
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -84,12 +94,15 @@ export function InputArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoListenTimerRef = useRef<number | null>(null);
+  const previousTtsStateRef = useRef(useTtsStore.getState().state);
 
   const activeId = useAppStore((s) => s.activeId);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const streamState = useAppStore((s) => s.streamState);
   const messages = useAppStore((s) => s.messages);
   const speechEnabled = useAppStore((s) => s.settings.speechEnabled);
+  const conversationMode = useAppStore((s) => s.settings.voiceConversationMode);
   const maxTokens = useAppStore((s) => s.settings.maxTokens);
   const temperature = useAppStore((s) => s.settings.temperature);
   const createConversation = useAppStore((s) => s.createConversation);
@@ -110,6 +123,7 @@ export function InputArea() {
     startRecording,
     stopRecording,
   } = useSpeech();
+  const ttsState = useTtsStore((s) => s.state);
 
   // Abort in-flight stream when the user switches models mid-generation.
   // This prevents errors from trying to continue a stream with a stale model.
@@ -145,7 +159,11 @@ export function InputArea() {
       try {
         const text = await stopRecording();
         if (text) {
-          setInput((prev) => (prev ? prev + ' ' + text : text));
+          window.dispatchEvent(
+            new CustomEvent('jarvis:quick-prompt', {
+              detail: { prompt: text, send: true },
+            }),
+          );
         }
       } catch {
         // Error is captured in useSpeech
@@ -154,6 +172,59 @@ export function InputArea() {
       await startRecording();
     }
   }, [speechState, startRecording, stopRecording]);
+
+  useEffect(() => {
+    const onToggleListening = () => {
+      if (micDisabled) return;
+      void handleMicClick();
+    };
+    window.addEventListener('jarvis:toggle-listening', onToggleListening);
+    return () => window.removeEventListener('jarvis:toggle-listening', onToggleListening);
+  }, [handleMicClick, micDisabled]);
+
+  useEffect(() => {
+    const onSilenceDetected = () => {
+      if (!conversationMode || speechState !== 'recording') return;
+      void handleMicClick();
+    };
+    window.addEventListener('jarvis:silence-detected', onSilenceDetected);
+    return () => window.removeEventListener('jarvis:silence-detected', onSilenceDetected);
+  }, [conversationMode, speechState, handleMicClick]);
+
+  useEffect(() => {
+    const previous = previousTtsStateRef.current;
+    previousTtsStateRef.current = ttsState;
+
+    const finishedSpeaking =
+      (previous === 'loading' || previous === 'speaking') &&
+      ttsState === 'idle';
+
+    if (!conversationMode || !finishedSpeaking) return;
+    if (!speechAvailable || speechState !== 'idle' || streamState.isStreaming) return;
+
+    if (autoListenTimerRef.current !== null) {
+      window.clearTimeout(autoListenTimerRef.current);
+    }
+
+    autoListenTimerRef.current = window.setTimeout(() => {
+      const app = useAppStore.getState();
+      if (!app.settings.voiceConversationMode || app.streamState.isStreaming) return;
+      window.dispatchEvent(new CustomEvent('jarvis:toggle-listening'));
+    }, 420);
+
+    return () => {
+      if (autoListenTimerRef.current !== null) {
+        window.clearTimeout(autoListenTimerRef.current);
+        autoListenTimerRef.current = null;
+      }
+    };
+  }, [
+    conversationMode,
+    ttsState,
+    speechAvailable,
+    speechState,
+    streamState.isStreaming,
+  ]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -171,8 +242,8 @@ export function InputArea() {
     resetStream();
   }, [resetStream]);
 
-  const sendMessage = useCallback(async () => {
-    const content = input.trim();
+  const sendMessage = useCallback(async (overridePrompt?: string) => {
+    const content = (overridePrompt ?? input).trim();
     if (!content || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
@@ -196,7 +267,11 @@ export function InputArea() {
 
     // Build API messages before adding assistant placeholder
     const currentMessages = useAppStore.getState().messages;
-    const apiMessages = currentMessages.map((m) => ({
+    const fastVoiceTurn = conversationMode && !needsSmartVoiceRoute(content);
+    const historySource = fastVoiceTurn
+      ? currentMessages.slice(-8)
+      : currentMessages;
+    const apiMessages = historySource.map((m) => ({
       role: m.role,
       content: m.content,
     }));
@@ -375,8 +450,27 @@ export function InputArea() {
           }
         }
       } else {
+      const voiceMaxTokens = fastVoiceTurn ? Math.min(maxTokens, 220) : maxTokens;
+      const voiceTemperature = fastVoiceTurn ? Math.min(temperature, 0.55) : temperature;
+      if (fastVoiceTurn) {
+        setStreamState({ phase: 'Resposta rápida...' });
+        useAppStore.getState().addLogEntry({
+          timestamp: Date.now(),
+          level: 'info',
+          category: 'chat',
+          message: 'Voice fast lane → direct local model',
+        });
+      }
+
       for await (const sseEvent of streamChat(
-        { model: selectedModel, messages: apiMessages, stream: true, temperature, max_tokens: maxTokens },
+        {
+          model: selectedModel,
+          messages: apiMessages,
+          stream: true,
+          temperature: voiceTemperature,
+          max_tokens: voiceMaxTokens,
+          direct: fastVoiceTurn,
+        },
         controller.signal,
       )) {
         const eventName = sseEvent.event;
@@ -554,6 +648,29 @@ export function InputArea() {
     maxTokens,
   ]);
 
+  useEffect(() => {
+    const onQuickPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: string; send?: boolean }>).detail;
+      const prompt = detail?.prompt?.trim();
+      if (!prompt) return;
+
+      if (detail.send) {
+        void sendMessage(prompt);
+        return;
+      }
+
+      setInput(prompt);
+      window.setTimeout(() => {
+        textareaRef.current?.focus();
+        const el = textareaRef.current;
+        if (el) el.setSelectionRange(el.value.length, el.value.length);
+      }, 0);
+    };
+
+    window.addEventListener('jarvis:quick-prompt', onQuickPrompt as EventListener);
+    return () => window.removeEventListener('jarvis:quick-prompt', onQuickPrompt as EventListener);
+  }, [sendMessage]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -608,7 +725,7 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
+          placeholder={selectedModel ? 'Fale com Jarvis...' : 'Selecione um modelo primeiro (⌘K)...'}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}

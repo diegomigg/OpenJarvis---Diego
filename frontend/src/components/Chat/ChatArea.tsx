@@ -1,19 +1,52 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { MessageBubble } from './MessageBubble';
 import { InputArea } from './InputArea';
 import { StreamingDots } from './StreamingDots';
 import { useAppStore } from '../../lib/store';
-import { shouldAutoplayFinishedReply, useTtsStore } from '../../lib/tts';
-import { stripThinkTags } from '../../lib/message-text';
-import { Sparkles, PanelRightOpen, PanelRightClose, Database, MessageSquare, X } from 'lucide-react';
+import { useTtsStore } from '../../lib/tts';
+import { JarvisCore } from './JarvisCore';
+import {
+  Database,
+  Maximize2,
+  MessageSquareText,
+  Minimize2,
+  PanelRightClose,
+  PanelRightOpen,
+  X,
+} from 'lucide-react';
 import { listConnectors } from '../../lib/connectors-api';
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+function nextSpeechChunk(
+  text: string,
+  firstChunk: boolean,
+): { chunk: string; consumed: number } | null {
+  const minLength = firstChunk ? 42 : 24;
+
+  for (let i = minLength; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1] ?? '';
+
+    if ('.!?'.includes(char) && (!next || /\s/.test(next))) {
+      return { chunk: text.slice(0, i + 1), consumed: i + 1 };
+    }
+
+    // Do not make the user wait for a very long opening sentence. Once the
+    // first thought is established, a comma/colon is a natural early hand-off
+    // to TTS while the LLM continues generating.
+    if (firstChunk && i >= 58 && ',:;'.includes(char)) {
+      return { chunk: text.slice(0, i + 1), consumed: i + 1 };
+    }
+  }
+
+  if (text.length >= 180) {
+    const splitAt = text.lastIndexOf(' ', 180);
+    if (splitAt >= minLength) {
+      return { chunk: text.slice(0, splitAt), consumed: splitAt + 1 };
+    }
+  }
+
+  return null;
 }
 
 export function ChatArea() {
@@ -21,73 +54,115 @@ export function ChatArea() {
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const systemPanelOpen = useAppStore((s) => s.systemPanelOpen);
+  const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSystemPanel = useAppStore((s) => s.toggleSystemPanel);
+  const immersive = !sidebarOpen && !systemPanelOpen;
   const navigate = useNavigate();
+
   const listRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
   const wasStreaming = useRef(false);
   const lastScrollTop = useRef(0);
-  const isCurrentChatStreaming = streamState.isStreaming && streamState.conversationId === activeId;
+  const isCurrentChatStreaming =
+    streamState.isStreaming && streamState.conversationId === activeId;
 
-  // Autoplay: speak a reply once it is finished, never while it streams -- a
-  // partial sentence would be synthesized and then cut off by the next chunk.
-  // autoSpokenId fences the message so re-renders cannot repeat it.
   const voiceOutputEnabled = useAppStore((s) => s.settings.voiceOutputEnabled);
   const voiceAutoplay = useAppStore((s) => s.settings.voiceAutoplay);
-  // Probe the backend as soon as voice output is switched on. Without this the
-  // first reply could never autoplay: `available` is only set by ensureHealth,
-  // which until now ran solely from the per-message read-aloud button -- and
-  // that button does not exist until a reply is already on screen.
+  const ttsAvailable = useTtsStore((s) => s.available);
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
+
   useEffect(() => {
     if (!voiceOutputEnabled) return;
-    useTtsStore.getState().ensureHealth();
+    void useTtsStore.getState().ensureHealth();
   }, [voiceOutputEnabled]);
 
-  // Speak on the falling edge of a stream -- the moment a reply finishes -- and
-  // never merely because a finished reply happens to be on screen. Opening the
-  // app or switching conversations would otherwise read stale history aloud,
-  // and browsers block that anyway: playback with no preceding user gesture is
-  // rejected outright, so the failure would be silent in both senses.
-  const streamingConversationRef = useRef<string | null>(null);
+  const speechProgressRef = useRef<{
+    conversationId: string | null;
+    messageId: string | null;
+    consumed: number;
+    started: boolean;
+  }>({
+    conversationId: null,
+    messageId: null,
+    consumed: 0,
+    started: false,
+  });
+  const previousStreamingRef = useRef(false);
+
+  // Stream the answer into TTS sentence-by-sentence. The old path waited for
+  // the entire LLM reply to finish before synthesis even started, which made
+  // voice feel several seconds behind the already-visible text.
   useEffect(() => {
-    const last = messages[messages.length - 1];
     const tts = useTtsStore.getState();
-    const justFinished = shouldAutoplayFinishedReply(
-      streamingConversationRef.current,
-      activeId,
-      streamState.isStreaming,
-      last,
-      tts.autoSpokenId,
-    );
-    streamingConversationRef.current = isCurrentChatStreaming ? activeId : null;
+    const last = messages[messages.length - 1];
+    const canSpeak =
+      voiceOutputEnabled &&
+      voiceAutoplay &&
+      ttsAvailable === true &&
+      last?.role === 'assistant' &&
+      activeId !== null;
 
-    if (!justFinished) return;
-    if (!voiceOutputEnabled || !voiceAutoplay) return;
+    if (isCurrentChatStreaming && canSpeak && last) {
+      const progress = speechProgressRef.current;
+      if (
+        progress.conversationId !== activeId ||
+        progress.messageId !== last.id
+      ) {
+        progress.conversationId = activeId;
+        progress.messageId = last.id;
+        progress.consumed = 0;
+        progress.started = false;
+      }
 
-    if (!last || last.role !== 'assistant' || activeId === null) return;
+      let remaining = streamState.content.slice(progress.consumed);
+      let next = nextSpeechChunk(remaining, !progress.started);
 
-    // Model loading may still be in flight when a fast reply completes. Wait
-    // for the probe, then confirm that this is still the active finished reply.
-    const completedConversationId = activeId;
-    const completedMessageId = last.id;
-    void tts.ensureHealth().then(() => {
-      const app = useAppStore.getState();
-      const currentTts = useTtsStore.getState();
-      const currentLast = app.messages[app.messages.length - 1];
-      if (app.activeId !== completedConversationId || app.streamState.isStreaming) return;
-      if (!app.settings.voiceOutputEnabled || !app.settings.voiceAutoplay) return;
-      if (currentLast?.id !== completedMessageId || currentTts.available !== true) return;
-      if (currentTts.autoSpokenId === completedMessageId) return;
+      while (next) {
+        tts.enqueue(last.id, next.chunk);
+        progress.consumed += next.consumed;
+        progress.started = true;
+        tts.markAutoSpoken(last.id);
+        remaining = streamState.content.slice(progress.consumed);
+        next = nextSpeechChunk(remaining, false);
+      }
+    }
 
-      const text = stripThinkTags(currentLast.content);
-      if (!text) return;
-      currentTts.markAutoSpoken(completedMessageId);
-      void currentTts.speak(completedMessageId, text);
-    });
-  }, [activeId, messages, streamState.isStreaming, isCurrentChatStreaming, voiceOutputEnabled, voiceAutoplay]);
+    const justFinished = previousStreamingRef.current && !isCurrentChatStreaming;
+    previousStreamingRef.current = isCurrentChatStreaming;
+
+    if (justFinished && canSpeak && last) {
+      const progress = speechProgressRef.current;
+      const finalText = last.content || '';
+      const remainder =
+        progress.messageId === last.id
+          ? finalText.slice(progress.consumed)
+          : finalText;
+
+      if (remainder.trim()) {
+        tts.enqueue(last.id, remainder);
+      }
+      tts.markAutoSpoken(last.id);
+      speechProgressRef.current = {
+        conversationId: null,
+        messageId: null,
+        consumed: 0,
+        started: false,
+      };
+    }
+  }, [
+    activeId,
+    isCurrentChatStreaming,
+    messages,
+    streamState.content,
+    ttsAvailable,
+    voiceAutoplay,
+    voiceOutputEnabled,
+  ]);
+
   const currentStreamContent = isCurrentChatStreaming ? streamState.content : '';
 
-  // Check if any data sources are connected
   const [hasConnectedSources, setHasConnectedSources] = useState<boolean | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
@@ -98,16 +173,15 @@ export function ChatArea() {
   }, []);
 
   useEffect(() => {
-    // Sending a message always pins the view to the bottom, even if the
-    // user had scrolled up to read earlier messages.
     if (isCurrentChatStreaming && !wasStreaming.current) {
       shouldAutoScroll.current = true;
     }
     wasStreaming.current = isCurrentChatStreaming;
-    if (shouldAutoScroll.current && listRef.current) {
+
+    if (shouldAutoScroll.current && listRef.current && (!immersive || chatOpen)) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
-  }, [messages, currentStreamContent, isCurrentChatStreaming]);
+  }, [messages, currentStreamContent, isCurrentChatStreaming, immersive, chatOpen]);
 
   const handleScroll = () => {
     if (!listRef.current) return;
@@ -115,39 +189,56 @@ export function ChatArea() {
     const distance = scrollHeight - scrollTop - clientHeight;
     const scrolledUp = scrollTop < lastScrollTop.current;
     lastScrollTop.current = scrollTop;
+
     if (scrolledUp && distance >= 1) {
-      // Any upward scroll away from the bottom stops autoscroll immediately,
-      // so streaming content never fights the user (no jitter). Sub-1px
-      // upward movement (elastic bounce settling at the bottom) is ignored.
       shouldAutoScroll.current = false;
     } else if (!scrolledUp) {
-      // Re-engage when scrolled back to the bottom. < 2 rather than < 1:
-      // at fractional zoom levels the at-bottom residual can reach 1px,
-      // which would otherwise leave autoscroll permanently disengaged.
       shouldAutoScroll.current = distance < 2;
     }
   };
 
   const isEmpty = messages.length === 0 && !isCurrentChatStreaming;
-
   const PanelIcon = systemPanelOpen ? PanelRightClose : PanelRightOpen;
 
-  return (
-    <div className="flex flex-col h-full">
-      {/* Toggle bar */}
-      <div className="flex items-center justify-end px-3 py-1.5 shrink-0">
-        <button
-          onClick={toggleSystemPanel}
-          className="p-1.5 rounded-md transition-colors cursor-pointer"
-          style={{ color: 'var(--color-text-tertiary)' }}
-          title={`${systemPanelOpen ? 'Hide' : 'Show'} system panel (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+I)`}
-        >
-          <PanelIcon size={16} />
-        </button>
-      </div>
+  const history = (
+    <>
+      {messages.map((msg, i) => {
+        const isLastAssistant =
+          i === messages.length - 1 && msg.role === 'assistant';
+        return (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isLive={isLastAssistant && isCurrentChatStreaming}
+          />
+        );
+      })}
+      {isCurrentChatStreaming && streamState.content === '' && (
+        <div className="flex justify-start mb-4">
+          <StreamingDots phase={streamState.phase} />
+        </div>
+      )}
+    </>
+  );
 
-      {/* Data sources banner */}
-      {hasConnectedSources === false && !bannerDismissed && (
+  return (
+    <div
+      className={`relative flex flex-col h-full ${immersive ? 'jarvis-chat-surface is-immersive' : ''}`}
+    >
+      {!immersive && (
+        <div className="flex items-center justify-end px-3 py-1.5 shrink-0">
+          <button
+            onClick={toggleSystemPanel}
+            className="p-1.5 rounded-md transition-colors cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)' }}
+            title={`${systemPanelOpen ? 'Hide' : 'Show'} system panel`}
+          >
+            <PanelIcon size={16} />
+          </button>
+        </div>
+      )}
+
+      {hasConnectedSources === false && !bannerDismissed && !immersive && (
         <div
           className="mx-4 mb-2 flex items-center gap-3 px-4 py-3 rounded-lg text-sm shrink-0"
           style={{
@@ -157,104 +248,97 @@ export function ChatArea() {
         >
           <Database size={16} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
           <span style={{ color: 'var(--color-text-secondary)', flex: 1 }}>
-            Connect your data sources (Gmail, iMessage, Slack, etc.) to get personalized answers.
+            Connect your data sources to get personalized answers.
           </span>
           <button
             onClick={() => navigate('/data-sources')}
             className="px-3 py-1 rounded text-xs font-medium cursor-pointer"
-            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)', border: 'none' }}
+            style={{
+              background: 'var(--color-accent)',
+              color: 'var(--color-on-accent)',
+              border: 'none',
+            }}
           >
             Connect
           </button>
           <button
             onClick={() => setBannerDismissed(true)}
             className="p-1 rounded cursor-pointer"
-            style={{ color: 'var(--color-text-tertiary)', background: 'transparent', border: 'none' }}
+            style={{
+              color: 'var(--color-text-tertiary)',
+              background: 'transparent',
+              border: 'none',
+            }}
           >
             <X size={14} />
           </button>
         </div>
       )}
+
       <div
         ref={listRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto"
       >
-        {isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full px-4">
-            <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
-              style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
-            >
-              <Sparkles size={24} />
-            </div>
-            <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
-              {getGreeting()}
-            </h2>
-            <p className="text-sm text-center max-w-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-              Ask anything. Your AI runs locally — private, fast, and always available.
-            </p>
-
-            {/* Quick action hints */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => navigate('/data-sources')}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs cursor-pointer transition-colors"
-                style={{
-                  background: 'var(--color-bg-secondary)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text-secondary)',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-accent)')}
-                onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-              >
-                <Database size={14} style={{ color: 'var(--color-accent)' }} />
-                Connect Data Sources
-              </button>
-              <button
-                onClick={() => { navigate('/data-sources'); setTimeout(() => window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messaging' })), 100); }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs cursor-pointer transition-colors"
-                style={{
-                  background: 'var(--color-bg-secondary)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text-secondary)',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-accent)')}
-                onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-              >
-                <MessageSquare size={14} style={{ color: 'var(--color-accent)' }} />
-                Set Up Messaging Channels
-              </button>
-            </div>
+        {immersive ? (
+          <div className="flex items-center justify-center min-h-full px-5 py-6">
+            <JarvisCore />
+          </div>
+        ) : isEmpty ? (
+          <div className="flex items-center justify-center min-h-full px-5 py-8">
+            <JarvisCore />
           </div>
         ) : (
-          <div className="max-w-[var(--chat-max-width)] mx-auto px-4 py-6">
-            {messages.map((msg, i) => {
-              const isLastAssistant =
-                i === messages.length - 1 && msg.role === 'assistant';
-              return (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  isLive={isLastAssistant && isCurrentChatStreaming}
-                />
-              );
-            })}
-            {(() => {
-              if (!isCurrentChatStreaming || streamState.content !== '') return null;
-              // For research messages the ResearchTimeline handles its own
-              // pre-content loading state — suppress the generic dots.
-              const last = messages[messages.length - 1];
-              if (last?.role === 'assistant' && last.isResearch) return null;
-              return (
-                <div className="flex justify-start mb-4">
-                  <StreamingDots phase={streamState.phase} />
-                </div>
-              );
-            })()}
-          </div>
+          <>
+            <div className="max-w-[var(--chat-max-width)] mx-auto px-4 pt-2">
+              <JarvisCore compact />
+            </div>
+            <div className="max-w-[var(--chat-max-width)] mx-auto px-4 py-6">
+              {history}
+            </div>
+          </>
         )}
       </div>
+
+      {immersive && (
+        <>
+          <button
+            type="button"
+            className={`jarvis-history-launcher ${chatOpen ? 'is-active' : ''}`}
+            onClick={() => setChatOpen((open) => !open)}
+            title="Abrir histórico da conversa"
+          >
+            <MessageSquareText size={16} />
+            <span>CONVERSA</span>
+          </button>
+
+          <aside
+            className={`jarvis-history-drawer ${chatOpen ? 'is-open' : ''} ${chatExpanded ? 'is-expanded' : ''}`}
+            aria-hidden={!chatOpen}
+          >
+            <div className="jarvis-history-drawer__head">
+              <div>
+                <span>J.A.R.V.I.S</span>
+                <strong>Histórico da conversa</strong>
+              </div>
+              <div className="jarvis-history-drawer__actions">
+                <button
+                  type="button"
+                  onClick={() => setChatExpanded((value) => !value)}
+                  title={chatExpanded ? 'Reduzir' : 'Ampliar'}
+                >
+                  {chatExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
+                <button type="button" onClick={() => setChatOpen(false)} title="Fechar">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="jarvis-history-drawer__body">{history}</div>
+          </aside>
+        </>
+      )}
+
       <InputArea />
     </div>
   );
