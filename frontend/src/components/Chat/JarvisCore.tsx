@@ -119,6 +119,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   const liveAvailable = useJarvisLiveStore((s) => s.available);
   const liveError = useJarvisLiveStore((s) => s.error);
   const liveSessionId = useJarvisLiveStore((s) => s.sessionId);
+  const liveBackendMode = useJarvisLiveStore((s) => s.backendMode);
+  const liveBackendModel = useJarvisLiveStore((s) => s.backendModel);
+  const liveSessionCost = useJarvisLiveStore((s) => s.sessionCostUsd);
+  const liveMonthCost = useJarvisLiveStore((s) => s.monthCostUsd);
+  const liveSeconds = useJarvisLiveStore((s) => s.liveSeconds);
+  const liveIdleRemaining = useJarvisLiveStore((s) => s.idleRemaining);
+  const liveUserCaption = useJarvisLiveStore((s) => s.userCaption);
+  const liveAssistantCaption = useJarvisLiveStore((s) => s.assistantCaption);
+  const setLiveBackendMode = useJarvisLiveStore((s) => s.setBackendMode);
   const ensureLiveStatus = useJarvisLiveStore((s) => s.ensureStatus);
   const connectLive = useJarvisLiveStore((s) => s.connect);
   const disconnectLive = useJarvisLiveStore((s) => s.disconnect);
@@ -171,6 +180,12 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
     streamState.isStreaming && streamState.content
       ? streamState.content
       : lastAssistant?.content;
+  const displayUserText =
+    liveState === 'live' && liveUserCaption ? liveUserCaption : lastUser?.content;
+  const displayAssistantText =
+    liveState === 'live' && liveAssistantCaption
+      ? liveAssistantCaption
+      : latestAssistantText;
 
   const dateLabel = useMemo(
     () =>
@@ -272,9 +287,9 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
         <button
           type="button"
           className={`jarvis-core jarvis-core--compact jarvis-core--${mode}`}
-          onClick={toggleListening}
+          onClick={liveAvailable ? () => void toggleJarvisLive() : toggleListening}
           aria-label="Falar com Jarvis"
-          title="Clique para falar com Jarvis"
+          title={liveState === 'live' ? 'Encerrar Jarvis Live' : liveAvailable ? 'Iniciar Jarvis Live' : 'Clique para falar com Jarvis'}
         >
           <div className="jarvis-core__halo" />
           <div className="jarvis-core__ring jarvis-core__ring--outer" />
@@ -301,7 +316,7 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
           <div className="jarvis-compact-detail">{copy.detail}</div>
           <div className="jarvis-live-caption">
             <span>VOCÊ</span>
-            <strong>{shortText(lastUser?.content, 72)}</strong>
+            <strong>{shortText(displayUserText, 72)}</strong>
           </div>
         </div>
 
@@ -391,23 +406,45 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
           </div>
 
           <div className="jarvis-glass-panel">
-            <div className="jarvis-panel-title">TELEMETRIA</div>
+            <div className="jarvis-panel-title">{liveState === 'live' ? 'CUSTO AO VIVO' : 'TELEMETRIA'}</div>
             <div className="jarvis-metrics">
-              <div>
-                <Zap size={14} />
-                <strong>{(liveEnergy?.power_w ?? 0).toFixed(1)} W</strong>
-                <span>potência</span>
-              </div>
-              <div>
-                <Activity size={14} />
-                <strong>{(savings?.total_tokens ?? 0).toLocaleString('pt-BR')}</strong>
-                <span>tokens</span>
-              </div>
-              <div>
-                <ShieldCheck size={14} />
-                <strong>LOCAL</strong>
-                <span>privacidade</span>
-              </div>
+              {liveState === 'live' ? (
+                <>
+                  <div>
+                    <Zap size={14} />
+                    <strong>US$ {liveSessionCost.toFixed(3)}</strong>
+                    <span>sessão</span>
+                  </div>
+                  <div>
+                    <Activity size={14} />
+                    <strong>US$ {liveMonthCost.toFixed(2)}</strong>
+                    <span>mês</span>
+                  </div>
+                  <div>
+                    <Clock3 size={14} />
+                    <strong>{liveIdleRemaining}s</strong>
+                    <span>auto-standby</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <Zap size={14} />
+                    <strong>{(liveEnergy?.power_w ?? 0).toFixed(1)} W</strong>
+                    <span>potência</span>
+                  </div>
+                  <div>
+                    <Activity size={14} />
+                    <strong>{(savings?.total_tokens ?? 0).toLocaleString('pt-BR')}</strong>
+                    <span>tokens</span>
+                  </div>
+                  <div>
+                    <ShieldCheck size={14} />
+                    <strong>LOCAL</strong>
+                    <span>privacidade</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </aside>
@@ -423,9 +460,9 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
           <button
             type="button"
             className={`jarvis-core jarvis-core--hero jarvis-core--${mode}`}
-            onClick={toggleListening}
+            onClick={liveAvailable ? () => void toggleJarvisLive() : toggleListening}
             aria-label="Falar com Jarvis"
-            title={voiceMode ? 'Clique para falar com Jarvis' : 'Ativar voz e falar com Jarvis'}
+            title={liveState === 'live' ? 'Encerrar Jarvis Live' : liveAvailable ? 'Clique para iniciar Jarvis Live' : 'Ativar voz e falar com Jarvis'}
           >
             <div className="jarvis-core__halo" />
             <div className="jarvis-core__scan" />
@@ -470,11 +507,11 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
           <div className="jarvis-dialogue-card">
             <div>
               <span>VOCÊ</span>
-              <p>{shortText(lastUser?.content, 96)}</p>
+              <p>{shortText(displayUserText, 96)}</p>
             </div>
             <div>
               <span>JARVIS</span>
-              <p>{shortText(latestAssistantText, 132)}</p>
+              <p>{shortText(displayAssistantText, 132)}</p>
             </div>
           </div>
         </main>
@@ -495,10 +532,20 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
               <strong>{liveState === 'live' ? 'GPT-LIVE / FULL DUPLEX' : deepResearch ? 'DEEP RESEARCH' : 'LOCAL / SMART'}</strong>
             </div>
             {liveState === 'live' && (
-              <div className="jarvis-context-item">
-                <span>LIVE BRAIN</span>
-                <strong>gpt-live-1 + gpt-5.6-terra</strong>
-              </div>
+              <>
+                <div className="jarvis-context-item">
+                  <span>LIVE BRAIN</span>
+                  <strong>gpt-live-1 + {liveBackendModel}</strong>
+                </div>
+                <div className="jarvis-context-item">
+                  <span>POLÍTICA DE CUSTO</span>
+                  <strong>{liveBackendMode === 'economy' ? 'ECONÔMICO / LUNA' : 'ANÁLISE / TERRA'}</strong>
+                </div>
+                <div className="jarvis-context-item">
+                  <span>SESSÃO</span>
+                  <strong>{Math.floor(liveSeconds / 60)}m {Math.floor(liveSeconds % 60)}s · US$ {liveSessionCost.toFixed(3)}</strong>
+                </div>
+              </>
             )}
           </div>
 
@@ -562,6 +609,23 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
               : liveState === 'live'
                 ? 'Encerrar Jarvis Live'
                 : 'Iniciar Jarvis Live'}
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`jarvis-action jarvis-action--brain ${liveBackendMode === 'analysis' ? 'is-active' : ''}`}
+          onClick={() =>
+            setLiveBackendMode(
+              liveBackendMode === 'economy' ? 'analysis' : 'economy',
+            )
+          }
+          title="Luna reduz custo; Terra entra quando você quer análise mais profunda"
+        >
+          <BrainCircuit size={15} />
+          <span>
+            {liveBackendMode === 'economy'
+              ? 'Cérebro: Luna econômico'
+              : 'Cérebro: Terra análise'}
           </span>
         </button>
         <button
