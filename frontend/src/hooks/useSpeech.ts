@@ -7,6 +7,15 @@ const SILENCE_THRESHOLD = 0.025;
 const SILENCE_TO_STOP_MS = 950;
 const MIN_RECORDING_MS = 550;
 
+function normalizeJarvisTranscript(text: string): string {
+  // Whisper can map the English wake/name "Jarvis" to nearby Portuguese
+  // spellings. Keep this deliberately narrow so ordinary words are untouched.
+  return text.replace(
+    /\b(javes|javis|jarves|jervis|jérvis|gervis|járvis)\b/gi,
+    'Jarvis',
+  );
+}
+
 export function useSpeech() {
   const [state, setState] = useState<SpeechState>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -169,7 +178,7 @@ export function useSpeech() {
         try {
           const result = await transcribeAudio(blob);
           setState('idle');
-          resolve(result.text);
+          resolve(normalizeJarvisTranscript(result.text));
         } catch (err) {
           setState('idle');
           const msg = err instanceof Error ? err.message : 'Transcription failed';
