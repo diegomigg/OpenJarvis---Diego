@@ -27,6 +27,7 @@ interface JarvisLiveStore {
   idleRemaining: number;
   userCaption: string;
   assistantCaption: string;
+  backendBusy: boolean;
   ensureStatus: () => Promise<void>;
   setBackendMode: (mode: JarvisBackendMode) => void;
   connect: () => Promise<void>;
@@ -66,6 +67,7 @@ let lastActivityAt = 0;
 let reportedLiveSeconds = 0;
 let sessionPersisted = false;
 const chargedResponses = new Set<string>();
+const pendingDelegations = new Set<string>();
 
 function currentMonthKey(): string {
   return new Date().toISOString().slice(0, 7);
@@ -200,6 +202,7 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
   idleRemaining: IDLE_TIMEOUT_SECONDS,
   userCaption: '',
   assistantCaption: '',
+  backendBusy: false,
 
   ensureStatus: async () => {
     try {
@@ -245,6 +248,7 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
     if (get().state === 'connecting' || get().state === 'live') return;
     cleanup();
     chargedResponses.clear();
+    pendingDelegations.clear();
     reportedLiveSeconds = 0;
     sessionPersisted = false;
     set({
@@ -258,6 +262,7 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
       idleRemaining: IDLE_TIMEOUT_SECONDS,
       userCaption: '',
       assistantCaption: '',
+      backendBusy: false,
       monthCostUsd: loadMonthCost(),
     });
 
@@ -308,6 +313,27 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
             lastActivityAt = now;
           }
 
+          if (type === 'session.delegation.created') {
+            const delegationId = String(
+              event.delegation?.id || event.delegation_id || '',
+            );
+            if (delegationId) pendingDelegations.add(delegationId);
+            set({ backendBusy: true });
+          }
+
+          if (type === 'response.event') {
+            const nestedType = String(event.event?.type || '');
+            if (
+              nestedType === 'response.completed' ||
+              nestedType === 'response.failed' ||
+              nestedType === 'response.incomplete'
+            ) {
+              const delegationId = String(event.delegation_id || '');
+              if (delegationId) pendingDelegations.delete(delegationId);
+              set({ backendBusy: pendingDelegations.size > 0 });
+            }
+          }
+
           if (type === 'session.input_transcript.delta') {
             set({
               userCaption: trimCaption(
@@ -352,7 +378,11 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
                 sessionCostUsd: liveCostUsd + get().backendCostUsd,
               });
 
-              if (idleRemaining <= 0 && get().state === 'live') {
+              if (
+                idleRemaining <= 0 &&
+                get().state === 'live' &&
+                pendingDelegations.size === 0
+              ) {
                 get().disconnect();
               }
             }, 1000);
@@ -384,8 +414,9 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
               sessionCostUsd: liveCostUsd + get().backendCostUsd,
             });
             finalizeSessionCost(set, get);
+            pendingDelegations.clear();
             cleanup();
-            set({ state: 'idle', sessionId: null });
+            set({ state: 'idle', sessionId: null, backendBusy: false });
           } else if (type === 'error') {
             const message =
               event.error?.message || event.message || 'Erro na sessão Live';
@@ -401,9 +432,10 @@ export const useJarvisLiveStore = create<JarvisLiveStore>((set, get) => ({
         if (!sessionPersisted && get().sessionCostUsd > 0) {
           finalizeSessionCost(set, get);
         }
+        pendingDelegations.clear();
         cleanup();
         if (get().state !== 'idle') {
-          set({ state: 'idle', sessionId: null });
+          set({ state: 'idle', sessionId: null, backendBusy: false });
         }
       });
 
