@@ -13,8 +13,6 @@ import {
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
 import { useTtsStore } from '../../lib/tts';
-const FAST_VOICE_API = 'http://127.0.0.1:8001';
-
 function needsSmartVoiceRoute(text: string): boolean {
   const normalized = text
     .normalize('NFD')
@@ -454,8 +452,6 @@ export function InputArea() {
       } else {
       const voiceMaxTokens = fastVoiceTurn ? Math.min(maxTokens, 220) : maxTokens;
       const voiceTemperature = fastVoiceTurn ? Math.min(temperature, 0.55) : temperature;
-      const chatBase = fastVoiceTurn ? FAST_VOICE_API : undefined;
-
       if (fastVoiceTurn) {
         setStreamState({ phase: 'Resposta rápida...' });
         useAppStore.getState().addLogEntry({
@@ -473,9 +469,9 @@ export function InputArea() {
           stream: true,
           temperature: voiceTemperature,
           max_tokens: voiceMaxTokens,
+          direct: fastVoiceTurn,
         },
         controller.signal,
-        chatBase,
       )) {
         const eventName = sseEvent.event;
 
