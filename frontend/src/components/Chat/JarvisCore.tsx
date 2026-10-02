@@ -20,8 +20,9 @@ import {
 import { useAppStore } from '../../lib/store';
 import { stripThinkTags } from '../../lib/message-text';
 import { useTtsStore } from '../../lib/tts';
+import { useJarvisLiveStore } from '../../lib/jarvis-live';
 
-type JarvisMode = 'idle' | 'listening' | 'thinking' | 'speaking';
+type JarvisMode = 'idle' | 'listening' | 'thinking' | 'speaking' | 'live';
 
 interface JarvisCoreProps {
   compact?: boolean;
@@ -69,6 +70,12 @@ function greetingFor(date: Date): string {
 }
 
 function modeCopy(mode: JarvisMode, phase: string, currentTool?: string) {
+  if (mode === 'live') {
+    return {
+      title: 'JARVIS LIVE',
+      detail: 'Conversa full-duplex conectada. Pode falar naturalmente e interromper quando quiser.',
+    };
+  }
   if (mode === 'listening') {
     return { title: 'OUVINDO', detail: 'Pode falar. Estou acompanhando.' };
   }
@@ -108,6 +115,13 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
   const setSidebarOpen = useAppStore((s) => s.setSidebarOpen);
   const setSystemPanelOpen = useAppStore((s) => s.setSystemPanelOpen);
   const ttsState = useTtsStore((s) => s.state);
+  const liveState = useJarvisLiveStore((s) => s.state);
+  const liveAvailable = useJarvisLiveStore((s) => s.available);
+  const liveError = useJarvisLiveStore((s) => s.error);
+  const liveSessionId = useJarvisLiveStore((s) => s.sessionId);
+  const ensureLiveStatus = useJarvisLiveStore((s) => s.ensureStatus);
+  const connectLive = useJarvisLiveStore((s) => s.connect);
+  const disconnectLive = useJarvisLiveStore((s) => s.disconnect);
   const [speechState, setSpeechState] = useState('idle');
   const [now, setNow] = useState(() => new Date());
 
@@ -126,9 +140,17 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    void ensureLiveStatus();
+  }, [ensureLiveStatus]);
+
   const mode: JarvisMode =
-    ttsState === 'speaking' || ttsState === 'loading'
-      ? 'speaking'
+    liveState === 'live'
+      ? 'live'
+      : liveState === 'connecting'
+        ? 'thinking'
+        : ttsState === 'speaking' || ttsState === 'loading'
+          ? 'speaking'
       : speechState === 'recording' || speechState === 'transcribing'
         ? 'listening'
         : streamState.isStreaming
@@ -231,6 +253,19 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
     }
   };
 
+  const toggleJarvisLive = async () => {
+    if (liveState === 'live' || liveState === 'connecting' || liveState === 'closing') {
+      disconnectLive();
+      return;
+    }
+
+    // GPT-Live owns microphone + speaker while active. Keep the chained local
+    // voice pipeline as a fallback, but never let both listen at once.
+    updateSettings({ voiceConversationMode: false });
+    useTtsStore.getState().stop();
+    await connectLive();
+  };
+
   if (compact) {
     return (
       <div className="jarvis-compact-shell jarvis-compact-shell--v2">
@@ -273,12 +308,12 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
         <div className="jarvis-compact-actions">
           <button
             type="button"
-            className={`jarvis-compact-voice ${conversationMode ? 'is-active' : ''}`}
-            onClick={toggleConversationMode}
-            title={conversationMode ? 'Encerrar conversa contínua' : 'Iniciar conversa contínua'}
+            className={`jarvis-compact-voice jarvis-compact-live ${liveState === 'live' ? 'is-active' : ''}`}
+            onClick={() => void toggleJarvisLive()}
+            title={liveState === 'live' ? 'Encerrar Jarvis Live' : 'Iniciar Jarvis Live'}
           >
             <Radio size={12} />
-            <span>{conversationMode ? 'LIVE' : 'VOZ'}</span>
+            <span>{liveState === 'connecting' ? '...' : liveState === 'live' ? 'LIVE' : 'GPT LIVE'}</span>
           </button>
           <button
             type="button"
@@ -339,9 +374,9 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
               <strong>{voiceMode ? 'ATIVO' : 'OFF'}</strong>
             </div>
             <div className="jarvis-service-row">
-              <span className={`jarvis-dot ${conversationMode ? 'is-online' : ''}`} />
-              <span>Conversa contínua</span>
-              <strong>{conversationMode ? 'LIVE' : 'OFF'}</strong>
+              <span className={`jarvis-dot ${liveState === 'live' ? 'is-online' : ''}`} />
+              <span>Jarvis Live</span>
+              <strong>{liveState === 'connecting' ? 'LINK...' : liveState === 'live' ? 'FULL DUPLEX' : liveAvailable ? 'READY' : 'OFF'}</strong>
             </div>
             <div className="jarvis-service-row">
               <span className="jarvis-dot is-online" />
@@ -399,7 +434,9 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
             <div className="jarvis-core__ring jarvis-core__ring--inner" />
             <div className="jarvis-core__ticks" />
             <div className="jarvis-core__orb">
-              {mode === 'listening' ? (
+              {mode === 'live' ? (
+                <Radio size={42} />
+              ) : mode === 'listening' ? (
                 <Mic size={42} />
               ) : mode === 'speaking' ? (
                 <Volume2 size={42} />
@@ -413,7 +450,15 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
 
           <div className="jarvis-status jarvis-status--hero">
             <div className="jarvis-status__mode">{copy.title}</div>
-            <div className="jarvis-status__detail">{copy.detail}</div>
+            <div className="jarvis-status__detail">
+              {liveState === 'error' && liveError ? liveError : copy.detail}
+            </div>
+            {liveSessionId && (
+              <div className="jarvis-tool-chip">
+                <Radio size={12} />
+                sessão {liveSessionId.slice(0, 16)}
+              </div>
+            )}
             {currentTool && (
               <div className="jarvis-tool-chip">
                 <Activity size={12} />
@@ -447,8 +492,14 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
             </div>
             <div className="jarvis-context-item">
               <span>MODO</span>
-              <strong>{deepResearch ? 'DEEP RESEARCH' : 'LOCAL / SMART'}</strong>
+              <strong>{liveState === 'live' ? 'GPT-LIVE / FULL DUPLEX' : deepResearch ? 'DEEP RESEARCH' : 'LOCAL / SMART'}</strong>
             </div>
+            {liveState === 'live' && (
+              <div className="jarvis-context-item">
+                <span>LIVE BRAIN</span>
+                <strong>gpt-live-1 + gpt-5.6-terra</strong>
+              </div>
+            )}
           </div>
 
           <div className="jarvis-glass-panel jarvis-attention-panel">
@@ -499,19 +550,36 @@ export function JarvisCore({ compact = false }: JarvisCoreProps) {
       <div className="jarvis-actions jarvis-actions--v2">
         <button
           type="button"
+          className={`jarvis-action jarvis-action--live ${liveState === 'live' ? 'is-active' : ''}`}
+          onClick={() => void toggleJarvisLive()}
+          disabled={liveAvailable === false || liveState === 'closing'}
+          title={liveAvailable === false ? 'Configure OPENAI_API_KEY em Settings > API Keys' : 'Conversa natural full-duplex com GPT-Live'}
+        >
+          <Radio size={15} />
+          <span>
+            {liveState === 'connecting'
+              ? 'Conectando Jarvis Live...'
+              : liveState === 'live'
+                ? 'Encerrar Jarvis Live'
+                : 'Iniciar Jarvis Live'}
+          </span>
+        </button>
+        <button
+          type="button"
           className={`jarvis-action jarvis-action--voice ${voiceMode ? 'is-active' : ''}`}
           onClick={toggleVoiceMode}
         >
           <Mic size={15} />
-          <span>{voiceMode ? 'Voz ativa' : 'Ativar modo voz'}</span>
+          <span>{voiceMode ? 'Voz local ativa' : 'Ativar voz local'}</span>
         </button>
         <button
           type="button"
           className={`jarvis-action jarvis-action--conversation ${conversationMode ? 'is-active' : ''}`}
           onClick={toggleConversationMode}
+          disabled={liveState === 'live' || liveState === 'connecting'}
         >
-          <Radio size={15} />
-          <span>{conversationMode ? 'Conversa contínua' : 'Iniciar conversa contínua'}</span>
+          <Waves size={15} />
+          <span>{conversationMode ? 'Conversa local contínua' : 'Conversa local contínua'}</span>
         </button>
         {QUICK_ACTIONS.slice(2).map((action) => {
           const Icon = action.icon;
