@@ -108,6 +108,7 @@ interface Settings {
   speechEnabled: boolean;
   voiceOutputEnabled: boolean;
   voiceAutoplay: boolean;
+  voiceConversationMode: boolean;
 }
 
 function loadSettings(): Settings {
@@ -123,6 +124,7 @@ function loadSettings(): Settings {
     speechEnabled: false,
     voiceOutputEnabled: false,
     voiceAutoplay: false,
+    voiceConversationMode: false,
   };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
