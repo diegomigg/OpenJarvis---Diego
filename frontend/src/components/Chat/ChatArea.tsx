@@ -15,7 +15,9 @@ export function ChatArea() {
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const systemPanelOpen = useAppStore((s) => s.systemPanelOpen);
+  const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSystemPanel = useAppStore((s) => s.toggleSystemPanel);
+  const immersive = !sidebarOpen && !systemPanelOpen;
   const navigate = useNavigate();
   const listRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
@@ -127,7 +129,7 @@ export function ChatArea() {
   const PanelIcon = systemPanelOpen ? PanelRightClose : PanelRightOpen;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={`flex flex-col h-full ${immersive ? 'jarvis-chat-surface is-immersive' : ''}`}>
       {/* Toggle bar */}
       <div className="flex items-center justify-end px-3 py-1.5 shrink-0">
         <button
@@ -141,7 +143,7 @@ export function ChatArea() {
       </div>
 
       {/* Data sources banner */}
-      {hasConnectedSources === false && !bannerDismissed && (
+      {hasConnectedSources === false && !bannerDismissed && !immersive && (
         <div
           className="mx-4 mb-2 flex items-center gap-3 px-4 py-3 rounded-lg text-sm shrink-0"
           style={{
@@ -180,10 +182,10 @@ export function ChatArea() {
           </div>
         ) : (
           <>
-            <div className="max-w-[var(--chat-max-width)] mx-auto px-4 pt-2">
-              <JarvisCore compact />
+            <div className={immersive ? 'max-w-[1180px] mx-auto px-4 pt-4' : 'max-w-[var(--chat-max-width)] mx-auto px-4 pt-2'}>
+              <JarvisCore compact={!immersive} />
             </div>
-            <div className="max-w-[var(--chat-max-width)] mx-auto px-4 py-6">
+            <div className={immersive ? 'jarvis-immersive-history max-w-[980px] mx-auto px-4 py-6' : 'max-w-[var(--chat-max-width)] mx-auto px-4 py-6'}>
             {messages.map((msg, i) => {
               const isLastAssistant =
                 i === messages.length - 1 && msg.role === 'assistant';
