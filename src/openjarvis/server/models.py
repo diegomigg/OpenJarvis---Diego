@@ -28,6 +28,10 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 1024
     stream: bool = False
     tools: Optional[List[Dict[str, Any]]] = None
+    # Internal/local UI optimization: bypass the configured server agent and
+    # stream directly from the selected inference engine. This is useful for
+    # low-latency conversational voice turns; tool-requiring turns leave it off.
+    direct: bool = False
 
 
 # ---------------------------------------------------------------------------
