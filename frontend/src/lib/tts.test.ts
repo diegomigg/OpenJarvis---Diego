@@ -166,6 +166,25 @@ describe('shared voice output', () => {
     expect(synth).not.toHaveBeenCalled();
   });
 
+  it('strips markdown formatting before synthesis', async () => {
+    synth.mockResolvedValue(new Blob(['wav']));
+
+    await useTtsStore.getState().speak(
+      'm1',
+      '**Resumo**\n\n### Clima\n- **Temperatura:** 26 graus\n- [Fonte](https://example.com)',
+    );
+
+    expect(synth).toHaveBeenCalledTimes(1);
+    const spoken = synth.mock.calls[0][0];
+    expect(spoken).toContain('Resumo');
+    expect(spoken).toContain('Clima');
+    expect(spoken).toContain('Temperatura: 26 graus');
+    expect(spoken).toContain('Fonte');
+    expect(spoken).not.toContain('*');
+    expect(spoken).not.toContain('#');
+    expect(spoken).not.toContain('https://');
+  });
+
   it('probes the backend once no matter how many callers ask', () => {
     health.mockResolvedValue({ available: true });
 
