@@ -1175,3 +1175,47 @@
 @media (max-width: 900px) {
   .jarvis-action--voice { grid-column: span 2; }
 }
+
+
+.jarvis-action--conversation {
+  grid-column: span 2;
+  border-color: color-mix(in srgb, #34d399 22%, var(--color-border));
+}
+
+.jarvis-action--conversation.is-active {
+  color: #34d399;
+  background: color-mix(in srgb, #34d399 10%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, #34d399 46%, var(--color-border));
+  box-shadow: 0 0 30px color-mix(in srgb, #34d399 12%, transparent);
+}
+
+.jarvis-action--conversation.is-active::after {
+  content: 'AUTO';
+  margin-left: 4px;
+  font: 700 8px/1 var(--font-hud);
+  letter-spacing: .14em;
+  color: #34d399;
+}
+
+.jarvis-compact-voice {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding: 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 700 9px/1 var(--font-hud);
+  letter-spacing: .12em;
+  cursor: pointer;
+  transition: 160ms ease;
+}
+
+.jarvis-compact-voice:hover,
+.jarvis-compact-voice.is-active {
+  color: #34d399;
+  border-color: color-mix(in srgb, #34d399 46%, var(--color-border));
+  background: color-mix(in srgb, #34d399 8%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, #34d399 10%, transparent);
+}
